@@ -1,0 +1,83 @@
+# Configuração canônica do time para golangci-lint.
+# Roda gofmt, go vet, staticcheck e dezenas de outros checks num único binário.
+#
+# Uso:
+#   golangci-lint run             # roda todos os linters habilitados
+#   golangci-lint run --fix       # aplica fixes automáticos onde possível
+#   golangci-lint run ./internal  # restringe a um pacote
+
+run:
+  timeout: 5m
+  go: "1.25"
+
+linters:
+  disable-all: true
+  enable:
+    # === Críticos para a stack ===
+    - errcheck         # erros não tratados (inclui _ = doThing())
+    - govet            # vet do compilador, regras default
+    - staticcheck      # análise estática profunda (substitui staticcheck standalone)
+    - bodyclose        # http.Response.Body sempre fechado
+    - sqlclosecheck    # sql.Rows / pgx.Rows sempre fechado
+    - contextcheck     # context propagado corretamente
+    - nilerr           # detecta `return nil` quando err != nil
+    - errorlint        # errors.Is/As em vez de ==, fmt.Errorf com %w
+
+    # === Idiomáticos ===
+    - gosimple         # simplificações idiomáticas
+    - ineffassign      # atribuições sem efeito
+    - unused           # código morto
+    - copyloopvar      # captura de var de loop (defensivo, mesmo em 1.22+)
+    - misspell         # erros de digitação em comentários/strings
+
+    # === Qualidade ===
+    - prealloc         # sugere pré-alocação de slices em loops
+    - revive           # linter modular, substituto leve de golint
+    - gosec            # checks de segurança (SQL injection, weak crypto, etc.)
+
+linters-settings:
+  errcheck:
+    check-blank: true   # também flagga `_ = funcThatReturnsError()`
+    exclude-functions:
+      - (io.Closer).Close   # padrão idiomático ignorar close em defer
+
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+      - name: package-comments
+        disabled: true   # não exigir doc.go em todo pacote
+      - name: var-naming
+        disabled: false
+        arguments:
+          - []                # allowlist vazio
+          - [MSISDN, ICCID, IMEI, IMSI, CPF, CNPJ, CEP, DDD]  # acrônimos do domínio
+
+  gosec:
+    excludes:
+      - G104   # já coberto por errcheck
+      - G115   # integer overflow checks são muito ruidosos
+
+  staticcheck:
+    checks:
+      - all
+      - "-ST1000"   # não exigir doc comment em todo pacote
+
+issues:
+  # Cap padrão é absurdamente baixo
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Em testes, abrir mão de algumas paranoias
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - contextcheck
+        - bodyclose
+
+    # main.go tem patterns próprios (cleanup, exit)
+    - path: cmd/.*/main\.go
+      linters:
+        - gosec       # OK ler env var sem tratamento elaborado em main

@@ -8,6 +8,18 @@ Leia os documentos antes de iniciar um projeto novo ou quando tiver dúvidas sob
 
 ## Documentos
 
+### [Diretrizes de colaboração com IA](./guidelines_ia.md)
+
+Como o time trabalha com IA generativa em código — descritivo, não prescritivo. Cobre:
+
+- O padrão recomendado: **humano dirige contrato (proto, schema, ADR), IA dirige implementação (handler, store, componente)**
+- A técnica das sessões separadas para isolar contexto de contrato e contexto de implementação
+- Onde IA é genuinamente boa (tradução constrita, boilerplate, refactor mecânico) e genuinamente ruim (modelagem de domínio, schema com awareness de carga, decisões regulatórias)
+- Como entregar contexto (AGENTS.md, ADRs, spec antes de implementação)
+- Como validar saída (failure modes específicos por stack, desconfiar de "parece certo")
+- Workflow por tipo de tarefa (feature nova, bug fix, refactor, spike, onboarding, debug)
+- Anti-padrões e postura cética saudável
+
 ### [Arquitetura de Serviços Backend](./arquitetura_backend.md)
 
 Padrão para serviços em Go + PostgreSQL + gRPC. Cobre:
@@ -41,6 +53,19 @@ Guia prático de como aplicamos a regra de idioma no código do dia a dia. Cobre
 - Vocabulário do nosso domínio (telecomunicações móveis)
 - Casos limítrofes e como decidir quando tiver dúvida
 - Erros comuns a evitar
+
+### [Guidelines Práticos — Go](./guidelines_golang.md)
+
+Receitas operacionais para o dia a dia em Go. Complementa o documento de arquitetura backend com o "como fazer" das ferramentas. Cobre:
+
+- Setup de máquina: `GOPRIVATE`, `insteadOf` SSH, configuração de módulos privados
+- Submodules com sparse-checkout para protos compartilhados
+- Makefile padrão com geração de código, build, lint e deploy
+- Embutindo versão/commit/data no binário via `-ldflags`
+- Containerfile multi-stage com dois runtimes: **distroless** (produção) e **alpine** (debug emergencial), tag `-alpine` para identificação
+- Configuração de `buf.yaml` / `buf.gen.yaml` com plugins locais e `googleapis`
+- Comandos do dia a dia, profiling, tooling (`golangci-lint`) e tabela de troubleshooting
+- Arquivos prontos para copiar em [`exemplos/`](./exemplos): `Makefile`, `Containerfile`, `buf.yaml`, `buf.gen.yaml`, `.golangci.yml`, `AGENTS.md`, e template/exemplo de ADR em [`exemplos/docs/adr/`](./exemplos/docs/adr/)
 
 ## Postura geral
 

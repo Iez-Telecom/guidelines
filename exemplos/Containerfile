@@ -1,0 +1,109 @@
+# syntax=docker/dockerfile:1.7
+# Containerfile
+#
+# Dois runtimes selecionáveis via --target:
+#   - runtime-distroless  (DEFAULT, produção)  -> tag: svc:v1.2.3
+#   - runtime-alpine      (debug emergencial)  -> tag: svc:v1.2.3-alpine
+#
+# A ordem dos stages importa: distroless é o último, então `podman build`
+# sem --target produz a imagem de produção. Quem quiser a versão de debug
+# precisa ser explícito (--target runtime-alpine).
+
+# ============================================================
+# Stage 1: Builder
+# ============================================================
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26-alpine AS builder
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+ARG BIN_NAME=server
+
+RUN apk add --no-cache git
+
+# Versões pinadas dos geradores: build reproduzível, independente do que
+# está instalado na máquina do dev ou no runner do CI
+RUN go install github.com/bufbuild/buf/cmd/buf@v1.70.0 \
+    && go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11 \
+    && go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+
+WORKDIR /src
+
+# Camada de dependências separada do código fonte:
+# mudanças em .go não invalidam o cache do go mod download
+COPY go.mod go.sum ./
+COPY vendor/ vendor/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+
+# Geramos código dentro do build — /gen/ não é commitado
+RUN buf dep update && buf generate
+
+# Binário estático com nome do serviço. CGO_ENABLED=0 garante portabilidade
+# (roda em alpine/distroless/scratch sem libs do sistema).
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build \
+        -mod=vendor \
+        -trimpath \
+        -ldflags="-s -w -X 'main.clientVersion=${VERSION}'" \
+        -o /out/${BIN_NAME} \
+        ./cmd/server
+
+# ============================================================
+# Stage 2 (opt-in): Alpine — VERSÃO DE DEBUG
+#
+# Build com:  podman build --target runtime-alpine -t svc:v1-alpine ...
+# Inclui sh, apk, wget — superfície de ataque maior, use SOMENTE para
+# debug emergencial (kubectl exec, troubleshoot interativo em incidente).
+# O sufixo -alpine na tag deixa explícito no kubectl describe pod / no
+# registry que aquela imagem NÃO é a versão de produção.
+# ============================================================
+FROM docker.io/library/alpine:3.20 AS runtime-alpine
+
+ARG BIN_NAME=server
+
+# Certificados CA + usuário não-root + utilitários úteis em debug
+RUN apk add --no-cache ca-certificates curl bind-tools \
+    && addgroup -S app \
+    && adduser -S -G app app
+
+# /usr/local/bin/<BIN_NAME>: fica no PATH e aparece em ps/top com o nome
+# do serviço. Útil dentro do container quando você abriu um shell.
+COPY --from=builder /out/${BIN_NAME} /usr/local/bin/${BIN_NAME}
+
+USER app:app
+EXPOSE 50051
+
+# ENV + shell form com `exec`: ARG não sobrevive ao runtime; ENV preserva
+# o nome do binário, e `exec` faz o sh ser substituído pelo processo Go
+# para que SIGTERM do K8s chegue até o app.
+ENV BIN_NAME=${BIN_NAME}
+ENTRYPOINT exec /usr/local/bin/${BIN_NAME}
+
+# ============================================================
+# Stage 3 (DEFAULT): Distroless — VERSÃO DE PRODUÇÃO
+#
+# Sem shell, sem package manager, sem usuário root. Imagem ~2 MB + binário.
+# Construída por padrão (último stage). Não tem `ps`, `sh`, `wget` —
+# investigação de incidente é feita via logs/traces/metrics, não exec.
+#
+# Trade-off do ENTRYPOINT: o exec form não interpola ARG/ENV (não há shell),
+# então o binário é copiado para um caminho fixo (/app). A identidade do
+# serviço fica na tag da imagem (cobranca-svc:v1.2.3) e nos labels do K8s,
+# que já é onde os operadores olham. Dentro do container, o binário se chama
+# /app em todos os serviços — aceitável porque você não consegue `ps`
+# distroless de qualquer forma.
+# ============================================================
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime-distroless
+
+ARG BIN_NAME=server
+
+COPY --from=builder /out/${BIN_NAME} /app
+
+USER nonroot:nonroot
+EXPOSE 50051
+
+ENTRYPOINT ["/app"]

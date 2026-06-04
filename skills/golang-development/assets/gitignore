@@ -1,0 +1,36 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+profile.out
+
+# Código gerado: regenerado no build do Containerfile (buf dep update + buf generate)
+# e por `make generate` localmente. NÃO commitar.
+/gen/
+
+# NÃO ignorar /vendor/ — dependências de terceiros são versionadas para garantir
+# build reproduzível sem rede. Atualizar com `make vendor` quando mexer em deps.
+
+# Workspaces locais (nunca commitados)
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Env (nunca commitar segredos)
+.env
+.env.local
+*.local.yaml
