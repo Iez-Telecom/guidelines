@@ -54,6 +54,19 @@ Guia prático de como aplicamos a regra de idioma no código do dia a dia. Cobre
 - Casos limítrofes e como decidir quando tiver dúvida
 - Erros comuns a evitar
 
+### [Banco de Dados — Guia para Desenvolvedores](./guideline_database.md)
+
+Como o desenvolvedor interage com o banco durante o desenvolvimento. Não é guia DBA — é sobre trabalhar bem localmente e propor schemas maduros. Cobre:
+
+- Stack: `pgx/v5`, `sqlc`, `golang-migrate`, Postgres 16 em container local
+- Banco local com `tmpfs`: reset em segundos, sem medo de destruir
+- Migrations forward-only: timestamp-based, sem `.down.sql`, imutáveis após commit
+- **Convenção de nomenclatura do schema**: tabelas, colunas, constraints, índices, enums — tudo em português de domínio
+- Ciclo de trabalho local: `make db-new` → editar → `make db-reset` → validar → commitar
+- Queries com sqlc: um arquivo por feature, anotações `:one` / `:many` / `:exec`
+- Diferença entre local (tmpfs, só você) e homologação (persistido, time inteiro)
+- Como entregar a proposta de migration para o time de DBA
+
 ### [Guidelines Práticos — Go](./guidelines_golang.md)
 
 Receitas operacionais para o dia a dia em Go. Complementa o documento de arquitetura backend com o "como fazer" das ferramentas. Cobre:

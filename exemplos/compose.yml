@@ -1,0 +1,30 @@
+# compose.yml — Postgres local para desenvolvimento.
+#
+# Uso: gerenciado via scripts/db.sh (que por sua vez é chamado por make db-*).
+# Não rodar `podman-compose up` direto — sempre via script para garantir
+# consistência de healthcheck e variáveis.
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-meuservico}_postgres
+    environment:
+      # Defaults para dev local. Override via .env.local se necessário.
+      POSTGRES_USER: ${POSTGRES_USER:-dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-meuservico_dev}
+      # Locale alinhado com produção (importante para ordenação,
+      # comparação de strings, case folding).
+      LANG: pt_BR.UTF-8
+      LC_ALL: pt_BR.UTF-8
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    # Volume tmpfs: dados em memória, reset rápido, ideal para dev.
+    # Para persistir entre reboots, trocar por volume nomeado.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dev} -d ${POSTGRES_DB:-meuservico_dev}"]
+      interval: 2s
+      timeout: 5s
+      retries: 10

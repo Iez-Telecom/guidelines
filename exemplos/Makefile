@@ -85,6 +85,40 @@ vendor: tidy ## Atualiza vendor/ com as dependências fixadas (commitar o result
 	go mod vendor
 
 # ============================================================
+# Banco de dados local (lógica em scripts/db.sh)
+# ============================================================
+
+db-up: ## Sobe o Postgres local via podman-compose
+	./scripts/db.sh up
+
+db-down: ## Para o Postgres local
+	./scripts/db.sh down
+
+db-reset: ## Destrói e recria o banco, reaplica todas as migrations (dev)
+	./scripts/db.sh reset
+
+db-migrate: ## Aplica migrations pendentes (sem destruir o banco)
+	./scripts/db.sh migrate
+
+db-new: ## Cria nova migration (uso: make db-new NAME=criar_tabela_assinantes)
+	@if [ -z "$(NAME)" ]; then \
+	    echo ">> Erro: defina NAME (ex: make db-new NAME=criar_tabela_assinantes)"; exit 1; \
+	fi
+	./scripts/db.sh new "$(NAME)"
+
+db-status: ## Mostra quais migrations foram aplicadas
+	./scripts/db.sh status
+
+db-shell: ## Abre psql no banco local
+	./scripts/db.sh shell
+
+db-seed: ## Aplica sql/seed.sql (dados de desenvolvimento)
+	./scripts/db.sh seed
+
+db-dump-schema: ## Exporta schema atual para sql/schema_dump.sql
+	./scripts/db.sh dump-schema
+
+# ============================================================
 # Container (Podman)
 #
 # Duas variantes:
@@ -162,6 +196,7 @@ dist-clean: clean ## Limpeza total, inclusive submodules
 	rm -rf .git/modules/SimfoniaProtos
 
 .PHONY: help generate proto-gen sql-gen build build-linux run test lint lint-fix tidy vendor \
+        db-up db-down db-reset db-migrate db-new db-status db-shell db-seed db-dump-schema \
         podman-build podman-build-alpine podman-run podman-run-alpine \
         podman-deploy podman-deploy-alpine \
         swagger-gen swagger-up clean dist-clean

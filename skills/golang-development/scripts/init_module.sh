@@ -28,7 +28,7 @@ echo ">> Criando serviço $MODULE em $DIR..."
 # Estrutura de diretórios (layout do time)
 # ============================================================
 
-mkdir -p "$DIR"/{cmd/server,api/proto/v1,gen,internal/{config,database,logger,observability},external,sql/{queries,schema},docs/adr}
+mkdir -p "$DIR"/{cmd/server,api/proto/v1,gen,internal/{config,database,logger,observability},external,sql/{queries,schema,migrations},scripts,docs/adr}
 cd "$DIR"
 
 # ============================================================
@@ -149,7 +149,9 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "sql/queries/"
-    schema: "sql/schema/"
+    # sqlc lê os .up.sql de migrations como schema cumulativo.
+    # Alternativa: manter sql/schema/schema.sql como snapshot manual.
+    schema: "sql/migrations/"
     gen:
       go:
         package: "pg_sql"
@@ -183,10 +185,20 @@ copy_or_warn() {
 echo ">> Copiando arquivos canônicos..."
 copy_or_warn Makefile
 copy_or_warn Containerfile
+copy_or_warn compose.yml
 copy_or_warn buf.yaml
 copy_or_warn buf.gen.yaml
 copy_or_warn .golangci.yml
 copy_or_warn AGENTS.md
+
+# Script de banco de dados
+if [[ -f "$EXEMPLOS_DIR/scripts/db.sh" ]]; then
+    cp "$EXEMPLOS_DIR/scripts/db.sh" scripts/db.sh
+    chmod +x scripts/db.sh
+    echo "   - scripts/db.sh (copiado e tornando executável)"
+else
+    echo "   - scripts/db.sh NÃO COPIADO (não encontrei $EXEMPLOS_DIR/scripts/db.sh)"
+fi
 
 # ADR template + numera o próximo como 0001 para o serviço já começar com um
 if [[ -f "$EXEMPLOS_DIR/docs/adr/0000-template.md" ]]; then
