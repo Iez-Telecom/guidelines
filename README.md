@@ -20,6 +20,18 @@ Como o time trabalha com IA generativa em código — descritivo, não prescriti
 - Workflow por tipo de tarefa (feature nova, bug fix, refactor, spike, onboarding, debug)
 - Anti-padrões e postura cética saudável
 
+### [Arquitetura de Plataforma](./arquitetura_plataforma.md)
+
+O documento macro, acima dos de backend e frontend. Descreve a forma geral do sistema — onde ficam as fronteiras e quem é dono do quê. Cobre:
+
+- O padrão de **duas camadas**: domínio (Go + gRPC, por capacidade de negócio) e experiência (BFF/Next.js); por que a consistência vem do domínio compartilhado
+- O vocabulário travado: **domínio (bounded context) não é o mesmo que aplicação/área**
+- Decomposição por capacidade de negócio, Lei de Conway e DDD — com a ressalva de que **a unidade é o bounded context; deployable separado é decisão posterior**
+- As costuras entre domínios: heurísticas de fronteira, onde mora a orquestração cross-domínio, e o risco de **distributed monolith**
+- Posição **provisória** sobre autenticação e autorização (negócio no domínio; sessão/RBAC na experiência)
+- O caminho incremental (*strangler fig*) a partir do `crm_gateway` atual
+- Quando NÃO seguir o padrão e quando um monólito modular basta
+
 ### [Arquitetura de Serviços Backend](./arquitetura_backend.md)
 
 Padrão para serviços em Go + PostgreSQL + gRPC. Cobre:
@@ -40,7 +52,8 @@ Padrão para aplicações em TypeScript + Next.js (App Router). Cobre:
 - Server Components versus Client Components — quando usar cada um
 - Padrão "ilha de interatividade" para performance
 - Escada de gerenciamento de estado (do `useState` ao Zustand)
-- Centralização de chamadas de API em `lib/api/`
+- Camada de dados via **gRPC server-side** (ConnectRPC) com os domínios — não REST, não banco direto
+- Web (Next.js fullstack) versus mobile (BFF Go fino, um por app)
 - Performance: bundle size, re-renders, cache do Next.js
 - Bibliotecas: o que usamos, o que avaliamos, o que evitamos
 

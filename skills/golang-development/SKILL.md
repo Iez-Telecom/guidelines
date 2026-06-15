@@ -93,6 +93,16 @@ A ordem importa por três razões:
 
 Para decisões que não cabem no contrato nem nos testes, usar ADRs em `docs/adr/` (template em `../../exemplos/docs/adr/`). Para contexto do serviço como um todo (visão geral, gotchas, convenções específicas), usar `AGENTS.md` na raiz (template em `../../exemplos/AGENTS.md`). Esses dois artefatos fazem o serviço ser navegável para qualquer contribuinte novo — humano ou IA.
 
+## Arquétipos de serviço Go
+
+Nem todo serviço Go é igual. Antes de escolher a estrutura, identifique o arquétipo — a decisão de quanta estrutura aplicar vem dele. O macro está em `../../arquitetura_plataforma.md`.
+
+- **Serviço de domínio** (o caso comum desta skill). Dono de dado e de regra de um *bounded context* (cliente, linha, fatura). Estrutura completa: `cmd/internal/external`, pacotes de feature, schema próprio. É o que `../../arquitetura_backend.md` descreve por padrão.
+- **BFF mobile** (camada de experiência, não domínio). Serviço fino, **um por app**, que traduz o gRPC publicado pelos domínios para o que aquele app precisa. **Não** é dono de dado, **não** tem banco, **não** carrega regra de negócio — se você se pegar colocando regra aqui, ela sobe para o domínio. Cai no padrão "mais simples que o padrão" de `../../arquitetura_backend.md#quando-divergir`: tipicamente um único pacote com handlers e os clientes gRPC dos domínios. A web **não** precisa de um BFF assim — lá o servidor Next.js já cumpre esse papel (ver `../../arquitetura_frontend.md`).
+- **Wrapper / ACL fino.** Tradução pura para um sistema externo (governo, ERP legado). Também "mais simples que o padrão": pode ser um pacote só. O trabalho real é a tradução na fronteira, não a estrutura.
+
+A regra prática: serviço de domínio ganha estrutura completa; BFF mobile e wrappers começam mínimos e só crescem se a complexidade real justificar.
+
 ## Workflow para qualquer tarefa Go
 
 ### 1. Identificar o tipo de tarefa e carregar a referência certa
@@ -112,7 +122,8 @@ Para decisões que não cabem no contrato nem nos testes, usar ADRs em `docs/adr
 | Observabilidade (logs, metrics, traces como contrato) | `references/observability.md` |
 | Review de código existente | `references/code-review-checklist.md` |
 | **Operacional**: setup de máquina, módulos privados, submodules, Makefile, Containerfile, ldflags, deploy | `../../guidelines_golang.md` + arquivos em `../../exemplos/` |
-| **Arquitetura**: estrutura `cmd/internal/external`, ACL, padrões de comunicação | `../../arquitetura_backend.md` |
+| **Plataforma (macro)**: duas camadas, decomposição por domínio, BFF mobile, distributed monolith | `../../arquitetura_plataforma.md` |
+| **Arquitetura (serviço)**: estrutura `cmd/internal/external`, ACL, padrões de comunicação | `../../arquitetura_backend.md` |
 | **Idioma**: o que vai em PT, o que vai em EN, exemplos | `../../convencao_de_idioma.md` |
 
 Ler **apenas** a(s) referência(s) relevantes. Não ler todas.
@@ -191,7 +202,9 @@ make podman-build-alpine # imagem alpine (debug, tag -alpine — só quando nece
 
 ```
 guidelines/                                    (raiz do repositório)
+├── arquitetura_plataforma.md                  macro: duas camadas, decomposição por domínio, BFF mobile
 ├── arquitetura_backend.md                     arquitetura de serviços (estrutura, ACL, comunicação)
+├── arquitetura_frontend.md                    camada de experiência (web Next.js, BFF mobile)
 ├── guidelines_golang.md                       operacional: setup, módulos privados, Makefile, Containerfile
 ├── convencao_de_idioma.md                     domínio em PT, técnico em EN — exemplos completos
 ├── exemplos/

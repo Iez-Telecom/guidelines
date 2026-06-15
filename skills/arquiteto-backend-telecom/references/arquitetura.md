@@ -49,7 +49,7 @@ internal/
     handler.go            # Handler gRPC/HTTP (protocolo → domínio)
     store.go              # Acesso ao banco (usa sqlc)
     cpf.go                # Lógica específica de CPF (conhecimento de domínio)
-  contrato/              # Outro pacote de feature, mesmo padrão
+  contratos/              # Outro pacote de feature, mesmo padrão
   database/
     database.go           # Abertura, gerenciamento e fechamento da conexão
   cep/                    # Pacote de domínio compartilhado (tratamento de CEP)
@@ -280,7 +280,7 @@ A camada de clientes grpc também tende a ser onde você descobre lacunas. Quand
 ## Coisas que evitamos explicitamente
 
 - O repositório `golang-standards/project-layout` como referência. Não é um padrão oficial, a comunidade Go critica, e o nome dele engana. A orientação oficial está em [go.dev/doc/modules/layout](https://go.dev/doc/modules/layout).
-- Adotar padrões de blogs de engenharia das FAANG **sem ponderar se o problema é o nosso**. Não há nada de errado em aprender com Spotify, Netflix ou Google — muita coisa boa vem de lá, e usar uma ideia dessas empresas não é algo que evitamos. O cuidado é outro: parte dos padrões delas existe para resolver "100 times não conseguem se coordenar", e se você adota essa solução sem ter esse problema, paga o custo sem colher o benefício. A regra não é "evite FAANG"; é avaliar cada ideia (venha de onde vier) pelo problema que ela resolve e se esse problema é realmente nosso.
+- Cargo-cult de blogs de engenharia das FAANG. Spotify, Netflix e Google têm problemas que não temos. Padrões que resolvem "100 times não conseguem se coordenar" pioram nossa situação, não melhoram. Avalie cada ideia pelo problema que ela resolve e se esse problema é realmente nosso.
 - Arquitetura especulativa para necessidades futuras hipotéticas. "Talvez troquemos banco de dados de Postgres por X" quase nunca acontece, e quando acontece, a abstração construída anos antes geralmente está errada para o novo banco. Arquitetura deve resolver problemas do presente.
 - Reescrever serviços antigos por moda arquitetural. Serviços existentes não migram para novos padrões a menos que haja um problema concreto em produção empurrando essa decisão.
 

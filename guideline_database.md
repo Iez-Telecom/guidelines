@@ -2,6 +2,8 @@
 
 Este documento orienta como o desenvolvedor interage com o banco de dados durante o desenvolvimento. Não é um guia de operações DBA nem de performance de produção — é sobre como trabalhar bem com o banco local e estruturar propostas de schema maduras.
 
+O documento se aplica aos **serviços de domínio**, que são donos de dado. A camada de experiência (aplicações Next.js, BFF mobile) **não tem banco de domínio próprio** — ela lê e escreve via gRPC nos domínios, como descrito no [`arquitetura_plataforma.md`](./arquitetura_plataforma.md). Se você está construindo uma aplicação de experiência e sentiu falta de um banco, provavelmente o que você quer é uma operação no domínio dono daquele dado.
+
 ## Stack
 
 | Camada | Ferramenta | Por quê |

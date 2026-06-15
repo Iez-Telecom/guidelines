@@ -20,7 +20,13 @@ O objetivo é consistência informada, não obediência cega. Um time que entend
 
 ## Postura
 
-Construímos aplicações que servem áreas de negócio específicas (vendas, atendimento). Cada aplicação é um deployable independente, consome dados via gRPC dos nossos serviços de backend (geralmente através de uma camada de API gateway ou BFF), e é mantida pelo time da área de negócio correspondente.
+Construímos aplicações que servem áreas de negócio específicas (vendas, atendimento). Cada aplicação é um deployable independente, é a camada de experiência descrita no [`arquitetura_plataforma.md`](./arquitetura_plataforma.md), e é mantida pelo time da área de negócio correspondente.
+
+Estas aplicações **não têm banco de dados de domínio próprio** e **não contêm regra de negócio** — quem é dono de dado e regra é a camada de domínio (serviços Go + gRPC). A aplicação cuida de renderização, sessão, orquestração de chamadas e modelagem de dado para tela.
+
+No web, usamos **Next.js fullstack**: o próprio servidor Next.js é a camada de experiência, e a "camada de dados" da aplicação, em vez de bater em banco, **fala gRPC com os serviços de domínio, server-side** (via ConnectRPC / cliente gRPC tipado). O browser conversa com o servidor Next.js; o servidor Next.js conversa com o domínio. Isso é detalhado na seção [Camada de dados](#camada-de-dados-a-experiência-fala-grpc-com-o-domínio).
+
+No mobile, o app não fala gRPC com o domínio direto — ele fala com um **BFF dedicado e fino** (um por app, em Go) que traduz o gRPC publicado pelos domínios para o que aquele app precisa. Ver [Web versus mobile](#web-versus-mobile).
 
 **Não** adotamos arquiteturas pesadas como Clean Architecture ou Hexagonal Architecture nos projetos frontend. Esses padrões resolvem problemas que existem em sistemas de longa duração com lógica de domínio rica e múltiplos clientes — o que se aplica ao backend, não ao frontend de uma aplicação web. Frontend tem natureza diferente: a "lógica de negócio" mora no backend, o frontend coordena interface, estado de UI, e chamadas para APIs. Aplicar arquitetura desenhada para isolar lógica de domínio em uma camada que *não tem* lógica de domínio é cerimônia sem benefício.
 
@@ -70,8 +76,8 @@ components/                   # Componentes reutilizáveis
       FormAssinante.tsx
 
 lib/                          # Código compartilhado não-componente
-  api/                        # Clientes para APIs do backend
-    assinantes.ts
+  api/                        # Clientes gRPC tipados (ConnectRPC) para os domínios
+    clientes.ts               # usados server-side (RSC / Server Actions)
     faturas.ts
   utils/                      # Helpers genuínos (formatação, validação)
     formatarCPF.ts
@@ -83,6 +89,9 @@ lib/                          # Código compartilhado não-componente
 hooks/                        # Custom hooks reutilizáveis
   useAssinante.ts
   useDebounce.ts
+
+gen/                          # Tipos/clientes gerados dos .proto (buf) — não editar
+  clientes/v1/
 
 public/                       # Assets estáticos
 ```
@@ -246,7 +255,7 @@ A escada de estado, do mais simples ao mais complexo:
 
 **URL state via `searchParams`.** Para estado que faz sentido sobreviver a refresh ou ser compartilhável via link: filtros de busca, paginação, ordenação. Use `useSearchParams()` do Next.js. Bonus: estado na URL melhora UX significativamente.
 
-**Server state via fetch + cache do Next.js.** Dados vindos do backend não são "estado da aplicação" — são cache de estado do servidor. O Next.js tem cache integrado bom o suficiente para a maioria dos casos. Para casos mais sofisticados, use TanStack Query (antigo React Query). Não coloque dados de servidor no Redux.
+**Server state via RSC + cache do Next.js.** Dados vindos do domínio não são "estado da aplicação" — são cache de estado do servidor. Como buscamos via gRPC server-side em Server Components, o caminho padrão é deixar o Next.js cachear (`revalidate`, tags de cache) e revalidar nas Server Actions. Só caia para TanStack Query (antigo React Query) no caso de borda em que um Client Component precisa buscar dado dinamicamente — e, mesmo aí, ele bate num route handler seu, não no domínio. Não coloque dados de servidor no Redux.
 
 **Context API.** Para estado que muitos componentes em níveis diferentes precisam acessar mas não muda com frequência: tema, autenticação, configurações do usuário. Não use Context para estado que muda muito — provoca re-renders em cascata.
 
@@ -254,45 +263,80 @@ A escada de estado, do mais simples ao mais complexo:
 
 A pergunta que destranca esta decisão: *quem precisa deste estado?* Se a resposta é "este componente", `useState`. Se é "este componente e seus filhos", lifted state. Se é "vários lugares da aplicação que não tem relação de parentesco", aí sim considere Context ou biblioteca.
 
-## Chamadas de API
+## Camada de dados: a experiência fala gRPC com o domínio
 
-Centralize chamadas de API em `lib/api/`, com uma função por operação. Não faça `fetch` direto em componentes.
+Esta é a fronteira entre a aplicação e o resto da plataforma, e a regra estruturante é simples: **a camada de dados da aplicação não bate em banco; ela fala gRPC com os serviços de domínio, sempre server-side.**
 
-```tsx
-// lib/api/assinantes.ts
-import { Assinante } from "@/lib/types/assinante";
+Os clientes gRPC ficam em `lib/api/`, gerados a partir dos `.proto` publicados pelos domínios e consumidos via **ConnectRPC** (cliente gRPC tipado). Uma função por operação de domínio, tipagem vinda do contrato, tratamento de erro consistente. Esses clientes são instanciados e usados **no servidor** — em Server Components e Server Actions —, nunca no browser.
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL;
+```ts
+// lib/api/clientes.ts
+import { createClient } from "@connectrpc/connect";
+import { createGrpcTransport } from "@connectrpc/connect-node";
+import { ServicoClientes } from "@/gen/clientes/v1/clientes_pb";
 
-export async function listarAssinantes(): Promise<Assinante[]> {
-  const res = await fetch(`${API_BASE}/assinantes`, {
-    next: { revalidate: 60 } // cache de 60 segundos
-  });
-  
-  if (!res.ok) {
-    throw new Error(`Falha ao listar assinantes: ${res.status}`);
-  }
-  
-  return res.json();
+// Transport server-side: fala gRPC direto com o domínio, dentro da rede.
+const transport = createGrpcTransport({
+  baseUrl: process.env.CLIENTES_GRPC_URL!, // endereço interno do serviço de domínio
+});
+
+const cliente = createClient(ServicoClientes, transport);
+
+export async function listarClientes() {
+  // Tipos vêm do .proto — sem modelagem paralela no front.
+  const { clientes } = await cliente.listarClientes({});
+  return clientes;
 }
 
-export async function buscarAssinante(id: string): Promise<Assinante> {
-  const res = await fetch(`${API_BASE}/assinantes/${id}`);
-  
-  if (!res.ok) {
-    if (res.status === 404) {
-      throw new AssinanteNaoEncontradoError(id);
-    }
-    throw new Error(`Falha ao buscar assinante: ${res.status}`);
-  }
-  
-  return res.json();
+export async function buscarCliente(id: string) {
+  // O erro gRPC (ex.: NOT_FOUND) chega tipado; traduza para o que a tela precisa.
+  return cliente.buscarCliente({ id });
 }
 ```
 
-Essa centralização tem três benefícios concretos: tipagem consistente em um lugar, tratamento de erro consistente em um lugar, e fácil de mockar em testes. Componentes importam `listarAssinantes()`, não fazem `fetch` direto.
+Três pontos importam aqui:
 
-Para mutações (POST, PUT, DELETE), use Server Actions do Next.js quando possível. Server Actions rodam no servidor, têm acesso a tudo que Server Components têm, e simplificam o código drasticamente comparado com chamadas client-side.
+**Server-side, sempre.** O `baseUrl` é um endereço interno da rede; o token de serviço, os segredos e o tráfego gRPC nunca chegam ao browser. Por isso o cliente é importado só por Server Components e Server Actions. Marcar um arquivo de `lib/api/` como acessível ao client é um erro — vaza credencial e expõe o domínio.
+
+**Sem modelagem de dado paralela.** Os tipos vêm do `.proto` gerado em `gen/`. A aplicação não redefine `Cliente` à mão; ela usa o tipo do contrato. Se a tela precisa de um formato diferente, a transformação é explícita e fica na fronteira (um mapeamento na função de `lib/api/`), não espalhada pelos componentes.
+
+**Leitura e mutação têm caminhos distintos:**
+
+- **Leitura:** Server Components chamam as funções de `lib/api/` diretamente, no render do servidor. Sem `useEffect`, sem fetch no client.
+- **Mutação:** use **Server Actions**. A action roda no servidor, chama o cliente gRPC, e revalida o que precisa. O Client Component invoca a action; ele nunca fala com o domínio direto.
+- **Caso de borda:** quando uma interação client-side precisa buscar dado sem recarregar a página (scroll infinito, busca incremental), exponha um **route handler** do Next.js que, no servidor, chama o mesmo cliente de `lib/api/`. O browser fala com o seu route handler; o route handler fala gRPC com o domínio. Mesmo nesse caso, o browser nunca toca o gRPC do domínio.
+
+```tsx
+// app/(dashboard)/clientes/acoes.ts
+"use server";
+
+import { suspenderLinha } from "@/lib/api/linhas";
+import { revalidatePath } from "next/cache";
+
+export async function acaoSuspenderLinha(linhaId: string) {
+  // Roda no servidor: chama o domínio via gRPC e revalida a tela.
+  await suspenderLinha({ linhaId });
+  revalidatePath("/clientes");
+}
+```
+
+Essa centralização tem os benefícios de sempre — tipagem e tratamento de erro num lugar só, fácil de mockar em teste — e mais um, específico do gRPC: o contrato `.proto` é a fonte de verdade dos tipos, então o front não pode divergir silenciosamente do que o domínio expõe. Quando o `.proto` muda de forma incompatível, o build quebra, que é exatamente o que você quer.
+
+## Web versus mobile
+
+As duas plataformas chegam ao domínio de jeitos diferentes, e a diferença é deliberada.
+
+**Web (Next.js fullstack).** O servidor Next.js já é um backend; ele fala gRPC com o domínio server-side, como descrito acima. Não há um BFF separado para o web — o "BFF" é o próprio servidor Next.js. Construir um serviço BFF adicional só para o web seria uma camada de rede a mais sem benefício, já que o Next.js server-side resolve exatamente esse papel.
+
+**Mobile (app nativo + BFF dedicado).** O app mobile não consegue (nem deve) carregar a lógica de orquestração e os segredos de serviço que o servidor Next.js carrega, e o ciclo de release de app é lento demais para acoplar a evolução dos contratos de domínio. Por isso o mobile fala com um **BFF dedicado e fino, um por app, escrito em Go**, que traduz o gRPC publicado pelos domínios para o que aquele app precisa. Esse BFF cai no padrão "mais simples que o padrão" do [`arquitetura_backend.md`](./arquitetura_backend.md#quando-divergir): tipicamente um único pacote com handlers e os clientes gRPC dos domínios, sem pastas de feature.
+
+O que o BFF mobile é e o que não é:
+
+- **É** uma camada de experiência (como o servidor Next.js), só que para o app. Faz agregação para tela, modela payload para o app, cuida de sessão/token do app.
+- **Não é** um domínio. Não é dono de dado nem de regra. Não tem banco de domínio. Se você se pegar colocando regra de negócio no BFF mobile, ela está na camada errada — sobe para o domínio.
+- **Não é** compartilhado entre apps. Um BFF por app evita que o BFF vire um mini-`crm_gateway` acoplando apps que evoluem em ritmos diferentes. Se dois apps precisam exatamente da mesma coisa, isso é coincidência até prova em contrário.
+
+A regra que vale para os dois: a orquestração de fluxo cross-domínio mora na camada de experiência (servidor Next.js ou BFF mobile), nunca em um domínio chamando outro em cadeia. É o ponto tratado em [`arquitetura_plataforma.md`](./arquitetura_plataforma.md).
 
 ## Componentes: princípios concretos
 
@@ -315,6 +359,8 @@ Para mutações (POST, PUT, DELETE), use Server Actions do Next.js quando possí
 `typescript` — sempre. Configurado em modo estrito.
 
 `tailwindcss` — para estilização. Padronização e produtividade fortes.
+
+`@connectrpc/connect` + `@connectrpc/connect-node` — clientes gRPC tipados para falar com os domínios server-side. É a base da camada de dados; os tipos saem dos `.proto` publicados, gerados em `gen/` via `buf`.
 
 **Que consideramos caso a caso:**
 
@@ -348,7 +394,7 @@ Esta seção existe porque é onde mais vejo desenvolvedores frontend perdendo a
 
 **Listas grandes precisam de virtualização.** Renderizar tabela com 10.000 linhas trava o browser. Use `react-window` ou `react-virtual` para listas longas. Mas: a maioria das "listas grandes" são páginas com 50 itens, e virtualização é overkill. Meça antes de otimizar.
 
-**Cache é seu amigo.** Next.js cacheia `fetch` automaticamente. Use `revalidate` para controlar tempo de vida. Para dados que raramente mudam (lista de planos, lista de operadoras), cache longo é correto. Não desabilite cache "para garantir dados atualizados" sem entender o custo — você está pagando tempo de servidor e latência por algo que talvez não precisava.
+**Cache é seu amigo.** O cache automático de `fetch` do Next.js **não** cobre chamadas gRPC — elas não passam por `fetch`. Para cachear leitura de domínio, envolva a chamada do cliente gRPC em `unstable_cache` (ou `cache()` do React para deduplicação por request) e invalide com `revalidateTag` / `revalidatePath` nas Server Actions. Para dados que raramente mudam (lista de planos, lista de operadoras), cache longo é correto. Não desabilite cache "para garantir dados atualizados" sem entender o custo — você está pagando latência e carga no domínio por algo que talvez não precisava.
 
 ## Quando divergir deste documento
 
@@ -375,6 +421,8 @@ Em qualquer caso de divergência, registre no README do projeto: o que está sen
 **Custom design systems do zero.** Construir Button, Input, Modal do zero parece divertido e custa anos de desenvolvimento e manutenção. Use bibliotecas como shadcn/ui, Radix, ou Headless UI como base, e customize. Construir do zero só faz sentido se você tem time dedicado a isso.
 
 ## Recursos para aprofundar
+
+Há uma skill operacional do time, [`skills/frontend-nextjs`](./skills/frontend-nextjs/SKILL.md), que destila este documento em checklist e receitas (com código de ConnectRPC, Server Actions e route handlers em `references/data-layer.md`). Use-a no dia a dia; este documento é a fonte do *porquê*.
 
 A documentação oficial do Next.js está atualmente entre as melhores documentações de framework que existem. A seção "App Router" e "Server Components" são leitura obrigatória.
 

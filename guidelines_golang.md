@@ -343,7 +343,7 @@ Não usamos `protoc` direto — apenas `buf`.
   - `PACKAGE_VERSION_SUFFIX`: forçaria todo pacote proto a terminar em `.v1`, `.v2`... Nosso schema de diretórios já tem `/v1/`, e o sufixo no nome do pacote duplica informação sem agregar.
   - `PACKAGE_DIRECTORY_MATCH`: exigiria que o nome do pacote proto reflita o caminho do diretório. Em `external/proto` (submodule de terceiros) não temos controle dessa correspondência, então desligamos no projeto inteiro para evitar lint quebrando por arquivos que não são nossos.
 - **`rpc_allow_google_protobuf_empty_*`:** permite RPCs com `google.protobuf.Empty` em request ou response, sem ter que declarar uma mensagem vazia só para satisfazer o lint. Útil em health checks, refresh de cache e operações puramente disparadoras.
-- **`require_unimplemented_servers=false`:** o servidor **não** embute `UnimplementedXxxServer`; você precisa implementar todo RPC declarado no proto. Quando alguém adiciona um RPC novo, o build do servidor quebra imediatamente — preferimos esse sinal a deixar o servidor compilando e retornar `Unimplemented` em runtime. Use `true` apenas em wrappers/proxies onde implementar todos os RPCs é genuinamente opcional.
+- **`require_unimplemented_servers=true`:** o servidor embute `UnimplementedXxxServer`. Isso segue a especificação padrão do gRPC Go, garantindo compatibilidade retroativa e permitindo que o servidor compile mesmo se um novo RPC for adicionado ao contrato protobuf antes de ser implementado no código.
 
 ### Comandos do dia
 
