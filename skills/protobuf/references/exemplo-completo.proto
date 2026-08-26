@@ -1,0 +1,235 @@
+syntax = "proto3";
+
+// ============================================================
+// EXEMPLO-GABARITO do padrão de protobuf da iez! Telecom.
+// Serviço fictício de Recargas, escolhido por exercitar todos os
+// elementos do padrão: envelopes dedicados, request vazio, enum com
+// máquina de estados, dinheiro em centavos, referências cruzadas,
+// condicionais, idempotência, paginação por cursor e dado derivado
+// de outro serviço.
+// ============================================================
+
+// Pacote do App Assinante v1.
+// Contém os contratos de API do BFF (Backend for Frontend) mobile da iez! Telecom.
+package iez.app_assinante.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "app-assinante-backend/gen/go/v1;v1";
+
+// Recargas expõe operações de consulta e compra de recargas de créditos
+// para linhas pré-pagas do assinante.
+//
+// Integra com o CRM Simfonia (catálogo de valores) e com o gateway de
+// pagamentos (efetivação via PIX). As consultas não exigem passo
+// adicional de autenticação além da sessão; a compra exige.
+// Posição na jornada: o uuid da linha vem do serviço Contratos
+// (campo linha.uuid de LerContratoUUID).
+service Recargas {
+  // ListarValoresRecarga retorna o catálogo de valores de recarga
+  // disponíveis para compra.
+  //
+  // Use para popular a tela de seleção de valor antes da compra.
+  // O catálogo é o mesmo para todas as linhas; pode ser cacheado pelo
+  // aplicativo com TTL curto.
+  //
+  // Retorna lista vazia (não erro) se o catálogo estiver indisponível
+  // no CRM — situação anormal que deve ser tratada na interface.
+  rpc ListarValoresRecarga (ListarValoresRecargaRequest) returns (ListarValoresRecargaResponse) {}
+
+  // ComprarRecarga inicia a compra de uma recarga para uma linha
+  // pré-paga, gerando a cobrança via PIX.
+  //
+  // Use quando o assinante confirma o valor selecionado em
+  // ListarValoresRecarga. A recarga só é creditada na linha após a
+  // confirmação do pagamento — acompanhe via ConsultarRecarga.
+  //
+  // Erros:
+  // - NOT_FOUND: uuid_linha ou uuid_valor_recarga inexistentes.
+  // - FAILED_PRECONDITION: a linha não é pré-paga, ou não está em
+  //   situação que permita recarga (ex: CANCELADO).
+  rpc ComprarRecarga (ComprarRecargaRequest) returns (ComprarRecargaResponse) {}
+
+  // ConsultarRecarga retorna a situação atual de uma recarga.
+  //
+  // Use para acompanhar a efetivação após ComprarRecarga (ex: polling
+  // na tela de aguardando pagamento) ou para exibir o detalhe de uma
+  // recarga do histórico (obtenha o uuid via ListarHistoricoRecargas).
+  //
+  // Erros:
+  // - NOT_FOUND: o UUID da recarga não existe ou não pertence ao
+  //   assinante.
+  rpc ConsultarRecarga (ConsultarRecargaRequest) returns (ConsultarRecargaResponse) {}
+
+  // ListarHistoricoRecargas retorna as recargas já realizadas em uma
+  // linha, da mais recente para a mais antiga, com paginação por cursor.
+  //
+  // Use na tela de histórico de recargas da linha. Para acompanhar uma
+  // recarga em andamento, use ConsultarRecarga.
+  //
+  // Retorna lista vazia (não erro) se a linha nunca teve recargas.
+  //
+  // Erros:
+  // - NOT_FOUND: uuid_linha inexistente ou não pertence ao assinante.
+  rpc ListarHistoricoRecargas (ListarHistoricoRecargasRequest) returns (ListarHistoricoRecargasResponse) {}
+}
+
+// ListarValoresRecargaRequest não possui parâmetros de entrada.
+// Mensagem vazia dedicada para permitir evolução futura (ex: filtro por
+// tipo de linha) sem breaking change.
+// [PADRÃO: nunca usar google.protobuf.Empty no lugar disto.]
+message ListarValoresRecargaRequest {}
+
+// ListarValoresRecargaResponse retorna o catálogo de valores de recarga.
+message ListarValoresRecargaResponse {
+  // Valores disponíveis para compra, em ordem crescente de valor.
+  // Pode ser vazia (ver comentário do RPC).
+  repeated ValorRecarga valores = 1;
+}
+
+// ValorRecarga representa uma opção do catálogo de recargas.
+// [PADRÃO: mensagem de DOMÍNIO — reusável à vontade entre Responses
+// deste serviço. A regra de "nunca compartilhar" vale para os envelopes
+// Request/Response, não para tipos de domínio.]
+message ValorRecarga {
+  // UUID v4 da opção de recarga no CRM Simfonia. Imutável.
+  // Enviado como uuid_valor_recarga em ComprarRecarga.
+  string uuid = 1;
+
+  // Valor da recarga em centavos. Exemplo: 3000 = R$ 30,00.
+  // [PADRÃO: dinheiro nunca em double/float.]
+  int64 valor_centavos = 2;
+
+  // Bônus de dados concedido na recarga, em MB.
+  // Zero quando a opção não concede bônus. Exemplo: 2048 = 2 GB.
+  int64 bonus_dados_mb = 3;
+
+  // Validade dos créditos a partir da efetivação, em dias.
+  // Exemplo: 30.
+  int32 validade_dias = 4;
+}
+
+// ComprarRecargaRequest contém os dados para iniciar a compra.
+message ComprarRecargaRequest {
+  // UUID v4 da linha pré-paga a ser recarregada.
+  // Obtenha do campo linha.uuid de LerContratoUUID (serviço Contratos).
+  string uuid_linha = 1;
+
+  // UUID v4 do valor de recarga selecionado.
+  // Obtenha via ListarValoresRecarga.
+  string uuid_valor_recarga = 2;
+
+  // Chave de idempotência para evitar dupla cobrança em retry.
+  // Recomendado em fluxos automatizados. Pode ser vazio.
+  string idempotency_key = 3;
+}
+
+// ComprarRecargaResponse retorna a recarga criada e os dados de pagamento.
+message ComprarRecargaResponse {
+  // Recarga recém-criada, com situacao = AGUARDANDO_PAGAMENTO.
+  // Use o uuid em ConsultarRecarga para acompanhar a efetivação.
+  Recarga recarga = 1;
+
+  // Código PIX no formato Copia e Cola (EMV/BRCode), para pagamento
+  // em qualquer aplicativo bancário.
+  string pix_copia_cola = 2;
+
+  // Imagem do QR Code PIX codificada em base64 (PNG), para exibição
+  // direta no aplicativo.
+  string pix_qr_code = 3;
+}
+
+// ConsultarRecargaRequest contém o identificador da recarga.
+message ConsultarRecargaRequest {
+  // UUID v4 da recarga. Obtenha via ComprarRecarga ou
+  // ListarHistoricoRecargas.
+  string uuid = 1;
+}
+
+// ConsultarRecargaResponse retorna a situação atual da recarga.
+// [PADRÃO: envelope dedicado — nunca retornar a mensagem de domínio
+// Recarga diretamente, para a resposta poder ganhar campos próprios
+// (ex: avisos, próximos passos) sem poluir o tipo de domínio.]
+message ConsultarRecargaResponse {
+  // Recarga consultada.
+  Recarga recarga = 1;
+}
+
+// ListarHistoricoRecargasRequest contém a linha e os parâmetros de página.
+// [PADRÃO: paginação por cursor opaco (page_token), nunca por offset —
+// offset pula ou duplica itens quando a lista muda entre páginas.]
+message ListarHistoricoRecargasRequest {
+  // UUID v4 da linha cujo histórico será listado.
+  // Obtenha do campo linha.uuid de LerContratoUUID (serviço Contratos).
+  string uuid_linha = 1;
+
+  // Tamanho máximo da página. Default 50, máximo 200.
+  int32 page_size = 2;
+
+  // Cursor da próxima página, vindo de next_page_token de uma resposta
+  // anterior. Vazio para a primeira página.
+  string page_token = 3;
+}
+
+// ListarHistoricoRecargasResponse retorna uma página do histórico.
+message ListarHistoricoRecargasResponse {
+  // Recargas desta página, da mais recente para a mais antiga.
+  // Pode ser vazia (ver comentário do RPC).
+  repeated Recarga recargas = 1;
+
+  // Token para a próxima página. Vazio quando não há mais páginas.
+  string next_page_token = 2;
+}
+
+// Recarga representa uma compra de créditos para uma linha pré-paga.
+message Recarga {
+  // UUID v4 da recarga. Imutável.
+  string uuid = 1;
+
+  // UUID v4 da linha recarregada.
+  string uuid_linha = 2;
+
+  // Valor pago em centavos. Exemplo: 3000 = R$ 30,00.
+  int64 valor_centavos = 3;
+
+  // Situação atual da recarga. Veja SituacaoRecarga para a semântica
+  // e reversibilidade de cada valor.
+  SituacaoRecarga situacao = 4;
+
+  // Instante de criação da recarga (início da compra). Imutável. UTC.
+  google.protobuf.Timestamp data_criacao = 5;
+
+  // Instante da efetivação (crédito aplicado na linha).
+  // Ausente enquanto situacao != SITUACAO_RECARGA_EFETIVADA.
+  google.protobuf.Timestamp data_efetivacao = 6;
+}
+
+// SituacaoRecarga representa o ciclo de vida de uma recarga.
+// As situações são mutuamente exclusivas.
+// [PADRÃO: vocabulário fechado é enum, não string livre. Zero é
+// _UNSPECIFIED. Todos os valores prefixados com o nome do enum —
+// valores de enum proto3 compartilham o namespace do pacote.]
+enum SituacaoRecarga {
+  // Valor padrão. Indica que a situação não foi definida ou não foi
+  // reconhecida. Não use em requisições.
+  SITUACAO_RECARGA_UNSPECIFIED = 0;
+
+  // Compra iniciada, aguardando confirmação do pagamento PIX.
+  // Transita para EFETIVADA (pagamento confirmado) ou EXPIRADA
+  // (prazo do PIX vencido).
+  SITUACAO_RECARGA_AGUARDANDO_PAGAMENTO = 1;
+
+  // Pagamento confirmado e créditos aplicados na linha.
+  // Estado final; não reversível.
+  SITUACAO_RECARGA_EFETIVADA = 2;
+
+  // Prazo de pagamento do PIX vencido sem confirmação.
+  // Estado final; para nova tentativa, inicie outra compra com
+  // ComprarRecarga.
+  SITUACAO_RECARGA_EXPIRADA = 3;
+
+  // Pagamento estornado após a efetivação (ex: contestação).
+  // Os créditos correspondentes são debitados da linha.
+  // Estado final; não reversível.
+  SITUACAO_RECARGA_ESTORNADA = 4;
+}
